@@ -27,6 +27,7 @@ pub fn handler(ctx: Context<Initialize>) -> Result<()> {
     vault.total_deposits = 0;
     vault.created_at = clock.unix_timestamp;
     vault.bump = ctx.bumps.vault;
+    vault.is_paused = false;
 
     msg!("金库已创建 | 所有者: {}", vault.authority);
     Ok(())

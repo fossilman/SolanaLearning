@@ -11,6 +11,8 @@ pub struct Vault {
     pub created_at: i64,
     /// PDA bump (存储它以节省后续计算)
     pub bump: u8,
+    /// 紧急暂停状态
+    pub is_paused: bool,
 }
 
 impl Vault {

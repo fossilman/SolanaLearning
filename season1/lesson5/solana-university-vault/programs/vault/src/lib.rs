@@ -23,5 +23,9 @@ pub mod vault {
     pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
         instructions::withdraw::handler(ctx, amount)
     }
+
+    pub fn toggle_pause(ctx: Context<TogglePause>) -> Result<()> {
+        instructions::toggle_pause::handler(ctx)
+    }
 }
 

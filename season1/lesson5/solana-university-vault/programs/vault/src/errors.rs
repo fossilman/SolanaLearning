@@ -10,5 +10,8 @@ pub enum VaultError {
     
     #[msg("数值溢出")]
     Overflow,
+    
+    #[msg("金库已暂停")]
+    VaultPaused,
 }
 

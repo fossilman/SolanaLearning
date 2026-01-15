@@ -21,6 +21,10 @@ pub struct Deposit<'info> {
 
 pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
     require!(amount > 0, VaultError::InvalidDepositAmount);
+    
+    // 检查金库是否已暂停
+    let vault = &ctx.accounts.vault;
+    require!(!vault.is_paused, VaultError::VaultPaused);
 
     // CPI: System Program Transfer (User -> Vault PDA)
     let cpi_accounts = Transfer {

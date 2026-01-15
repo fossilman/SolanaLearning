@@ -18,6 +18,9 @@ pub struct Withdraw<'info> {
 
 pub fn handler(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
     let vault = &mut ctx.accounts.vault;
+    
+    // 检查金库是否已暂停
+    require!(!vault.is_paused, VaultError::VaultPaused);
 
     // 1. 计算最大可提款金额 (当前余额 - 租金豁免门槛)
     let rent = Rent::get()?;
