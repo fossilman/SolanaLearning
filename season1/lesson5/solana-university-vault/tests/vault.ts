@@ -1,6 +1,6 @@
 import * as anchor from "@coral-xyz/anchor";
 import { expect } from "chai";
-import { BN } from "@coral-xyz/anchor";
+import BN from "bn.js";
 
 describe("vault", () => {
   // 配置 provider
@@ -50,8 +50,8 @@ describe("vault", () => {
         .rpc();
       expect.fail("应该失败");
     } catch (e) {
-      // 期望捕获 ConstraintHasOne 错误
-      expect(e.message).to.include("ConstraintHasOne");
+      // 期望捕获 ConstraintSeeds 错误
+      expect(e.message).to.include("ConstraintSeeds");
     }
   });
 
@@ -149,5 +149,129 @@ describe("vault", () => {
       // 期望捕获无效存款金额错误
       expect(e.message).to.include("InvalidDepositAmount");
     }
+  });
+
+  it("初始化时金库未暂停", async () => {
+    const vault = await program.account.vault.fetch(vaultAddress);
+    expect(vault.isPaused).to.equal(false);
+  });
+
+  it("所有者可以切换暂停状态", async () => {
+    // 第一次切换：暂停金库
+    await program.methods
+      .togglePause()
+      .accounts({
+        vault: vaultAddress,
+        authority: authority.publicKey,
+      })
+      .rpc();
+
+    // 验证已暂停
+    let vault = await program.account.vault.fetch(vaultAddress);
+    expect(vault.isPaused).to.equal(true);
+
+    // 第二次切换：恢复金库
+    await program.methods
+      .togglePause()
+      .accounts({
+        vault: vaultAddress,
+        authority: authority.publicKey,
+      })
+      .rpc();
+
+    // 验证已恢复
+    vault = await program.account.vault.fetch(vaultAddress);
+    expect(vault.isPaused).to.equal(false);
+  });
+
+  it("非所有者无法切换暂停状态", async () => {
+    const hacker = anchor.web3.Keypair.generate();
+    try {
+      await program.methods
+        .togglePause()
+        .accounts({
+          vault: vaultAddress,
+          authority: hacker.publicKey,
+        })
+        .signers([hacker])
+        .rpc();
+      expect.fail("应该失败");
+    } catch (e) {
+      // 期望捕获 ConstraintSeeds 或 has_one 错误
+      expect(
+        e.message.includes("ConstraintSeeds") || e.message.includes("has_one")
+      ).to.be.true;
+    }
+  });
+
+  it("暂停状态下不能存款", async () => {
+    // 先暂停金库
+    await program.methods
+      .togglePause()
+      .accounts({
+        vault: vaultAddress,
+        authority: authority.publicKey,
+      })
+      .rpc();
+
+    // 尝试存款
+    try {
+      await program.methods
+        .deposit(new BN(1000_000_000))
+        .accounts({
+          vault: vaultAddress,
+          authority: authority.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .rpc();
+      expect.fail("应该失败");
+    } catch (e) {
+      // 期望捕获金库暂停错误
+      expect(e.message).to.include("VaultPaused");
+    }
+
+    // 恢复金库
+    await program.methods
+      .togglePause()
+      .accounts({
+        vault: vaultAddress,
+        authority: authority.publicKey,
+      })
+      .rpc();
+  });
+
+  it("暂停状态下不能提款", async () => {
+    // 先暂停金库
+    await program.methods
+      .togglePause()
+      .accounts({
+        vault: vaultAddress,
+        authority: authority.publicKey,
+      })
+      .rpc();
+
+    // 尝试提款
+    try {
+      await program.methods
+        .withdraw(new BN(100_000_000))
+        .accounts({
+          vault: vaultAddress,
+          authority: authority.publicKey,
+        })
+        .rpc();
+      expect.fail("应该失败");
+    } catch (e) {
+      // 期望捕获金库暂停错误
+      expect(e.message).to.include("VaultPaused");
+    }
+
+    // 恢复金库
+    await program.methods
+      .togglePause()
+      .accounts({
+        vault: vaultAddress,
+        authority: authority.publicKey,
+      })
+      .rpc();
   });
 });
