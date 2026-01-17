@@ -1,11 +1,13 @@
 // create-token.ts
 import { createMint } from '@solana/spl-token';
-import { connection, loadWallet } from './config';
+import { connection, loadWallet, currentNetwork, networkConfig } from './config';
 
 async function createToken() {
     const payer = loadWallet();
 
     console.log('创建新代币...');
+    console.log('当前网络:', networkConfig.name, `(${currentNetwork})`);
+    console.log('RPC URL:', networkConfig.rpcUrl);
     console.log('钱包地址:', payer.publicKey.toBase58());
 
     // 创建 Mint 账户

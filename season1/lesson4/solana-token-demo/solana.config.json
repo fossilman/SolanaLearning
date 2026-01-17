@@ -1,0 +1,25 @@
+{
+  "defaultNetwork": "localnet",
+  "networks": {
+    "localnet": {
+      "name": "Local Network",
+      "rpcUrl": "http://127.0.0.1:8899",
+      "commitment": "confirmed"
+    },
+    "devnet": {
+      "name": "Devnet",
+      "rpcUrl": "https://api.devnet.solana.com",
+      "commitment": "confirmed"
+    },
+    "testnet": {
+      "name": "Testnet",
+      "rpcUrl": "https://api.testnet.solana.com",
+      "commitment": "confirmed"
+    },
+    "mainnet": {
+      "name": "Mainnet",
+      "rpcUrl": "https://api.mainnet-beta.solana.com",
+      "commitment": "confirmed"
+    }
+  }
+}
