@@ -1,0 +1,30 @@
+[package]
+name = "token_part3"
+version = "0.1.0"
+description = "Token Demo Part3 - TOKEN_PROGRAM_ID + METADATA_PROGRAM_ID"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "token_part3"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+
+[dependencies]
+anchor-lang = "0.32.1"
+anchor-spl = "0.32.1"
+bytemuck_derive = "=1.8.1"
+blake3 = "=1.7.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
