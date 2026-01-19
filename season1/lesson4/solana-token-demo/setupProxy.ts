@@ -1,4 +1,6 @@
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { setGlobalDispatcher, ProxyAgent } from 'undici';
+import WebSocket from 'ws';
 
 /**
  * 设置全局代理配置
@@ -11,6 +13,34 @@ const PROXY_URL = process.env.HTTP_PROXY || process.env.http_proxy || 'http://12
 if (PROXY_URL) {
   const proxyAgent = new ProxyAgent(PROXY_URL);
   setGlobalDispatcher(proxyAgent);
+
+  // 设置 WebSocket 代理
+  const httpsAgent = new HttpsProxyAgent(PROXY_URL);
+  const originalWebSocket = global.WebSocket || WebSocket;
+  
+  // 重写全局 WebSocket 构造函数以支持代理
+  (global as any).WebSocket = class extends WebSocket {
+    constructor(url: string | URL, protocols?: string | string[], options?: any) {
+      // 将 URL 转换为字符串以便检查协议
+      const urlString = typeof url === 'string' ? url : url.toString();
+      
+      // 为所有 WebSocket 连接（ws:// 和 wss://）设置代理
+      const wsOptions = {
+        ...options,
+        agent: (urlString.startsWith('ws://') || urlString.startsWith('wss://')) 
+          ? httpsAgent 
+          : (options?.agent || undefined)
+      };
+      
+      // ws 库的构造函数签名: (url, protocols?, options?)
+      if (protocols) {
+        super(url, protocols, wsOptions);
+      } else {
+        super(url, wsOptions);
+      }
+    }
+  };
+
   console.log(`✓ 代理已设置: ${PROXY_URL}`);
 } else {
   console.log('ℹ 未设置代理');
@@ -26,6 +56,32 @@ export function setupProxy(proxyUrl: string | null = null): void {
   if (finalProxyUrl) {
     const proxyAgent = new ProxyAgent(finalProxyUrl);
     setGlobalDispatcher(proxyAgent);
+
+    // WebSocket 代理
+    const httpsAgent = new HttpsProxyAgent(finalProxyUrl);
+    const originalWebSocket = global.WebSocket || WebSocket;
+    
+    (global as any).WebSocket = class extends WebSocket {
+      constructor(url: string | URL, protocols?: string | string[], options?: any) {
+        // 将 URL 转换为字符串以便检查协议
+        const urlString = typeof url === 'string' ? url : url.toString();
+        
+        // 为所有 WebSocket 连接（ws:// 和 wss://）设置代理
+        const wsOptions = {
+          ...options,
+          agent: (urlString.startsWith('ws://') || urlString.startsWith('wss://')) 
+            ? httpsAgent 
+            : (options?.agent || undefined)
+        };
+        
+        // ws 库的构造函数签名: (url, protocols?, options?)
+        if (protocols) {
+          super(url, protocols, wsOptions);
+        } else {
+          super(url, wsOptions);
+        }
+      }
+    };
     console.log(`✓ 代理已设置: ${finalProxyUrl}`);
   } else {
     console.log('ℹ 未设置代理');

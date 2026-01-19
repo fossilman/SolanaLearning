@@ -1,4 +1,6 @@
 // config.ts
+// 必须在导入 @solana/web3.js 之前设置代理
+import './setupProxy';
 import { Connection, Keypair } from '@solana/web3.js';
 import fs from 'fs';
 import { getNetworkConfig, getCurrentNetwork, type Network } from './networks';
@@ -7,10 +9,14 @@ import { getNetworkConfig, getCurrentNetwork, type Network } from './networks';
 const networkConfig = getNetworkConfig();
 const currentNetwork = getCurrentNetwork();
 
-// 连接到配置的网络
+// 连接到配置的网络，增加超时配置以应对网络延迟
 export const connection = new Connection(
     networkConfig.rpcUrl,
-    networkConfig.commitment
+    {
+        commitment: networkConfig.commitment,
+        confirmTransactionInitialTimeout: 1200000, // 1200秒超时（通过代理可能需要更长时间）
+        disableRetryOnRateLimit: false, // 启用速率限制重试
+    }
 );
 
 // 导出当前网络信息

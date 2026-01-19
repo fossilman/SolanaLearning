@@ -1,5 +1,5 @@
 {
-  "defaultNetwork": "localnet",
+  "defaultNetwork": "devnet",
   "networks": {
     "localnet": {
       "name": "Local Network",
