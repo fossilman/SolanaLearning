@@ -174,6 +174,7 @@ pub struct CloseTokenAccount<'info> {
     #[account(mut)]
     pub token_account: Account<'info, TokenAccount>,
     
+    /// CHECK: 这是关闭账户时接收剩余 lamports 的目标账户，可以是任何账户
     #[account(mut)]
     pub destination: AccountInfo<'info>,
     
