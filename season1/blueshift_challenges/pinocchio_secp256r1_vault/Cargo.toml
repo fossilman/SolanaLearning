@@ -1,0 +1,13 @@
+[package]
+name = "pinocchio_secp256r1_vault"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pinocchio = { version = "0.10.1", features = ["cpi"] }
+pinocchio-secp256r1-instruction = "0.1.2"
+pinocchio-system = "0.5.0"
+solana-address = { version = "2.0", features = ["curve25519"] }
+
+[lib]
+crate-type = ["lib", "cdylib"]

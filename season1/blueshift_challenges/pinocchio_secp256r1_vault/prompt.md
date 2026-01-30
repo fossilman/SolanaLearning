@@ -1,0 +1,387 @@
+<ArticleSection name="模板" id="template" level="h2" />
+
+让我们从基本的程序结构开始。我们将在 `lib.rs` 中实现所有内容，因为这是一个简单的程序。以下是包含核心组件的初始模板：
+
+```rust
+#![no_std]
+
+use pinocchio::{account_info::AccountInfo, entrypoint, nostd_panic_handler, program_error::ProgramError, pubkey::Pubkey, ProgramResult};
+
+entrypoint!(process_instruction);
+nostd_panic_handler!();
+
+pub mod instructions;
+pub use instructions::*;
+
+// 22222222222222222222222222222222222222222222
+pub const ID: Pubkey = [
+    0x0f, 0x1e, 0x6b, 0x14, 0x21, 0xc0, 0x4a, 0x07,
+    0x04, 0x31, 0x26, 0x5c, 0x19, 0xc5, 0xbb, 0xee,
+    0x19, 0x92, 0xba, 0xe8, 0xaf, 0xd1, 0xcd, 0x07,
+    0x8e, 0xf8, 0xaf, 0x70, 0x47, 0xdc, 0x11, 0xf7,
+];
+
+fn process_instruction(
+    _program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    match instruction_data.split_first() {
+        Some((Deposit::DISCRIMINATOR, data)) => Deposit::try_from((data, accounts))?.process(),
+        Some((Withdraw::DISCRIMINATOR, _)) => Withdraw::try_from(accounts)?.process(),
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}
+```
+
+<ArticleSection name="存款" id="deposit" level="h2" />
+
+存款指令执行以下步骤：
+1. 验证金库为空（lamports 为零），以防止重复存款
+2. 确保存款金额超过基本账户的免租金最低限额
+3. 使用 CPI 调用系统程序，将 lamports 从付款人转移到金库
+
+普通金库和 Secp256r1 金库的主要区别在于我们如何派生 PDA 以及谁被视为“所有者”。
+
+由于使用 Secp256r1 签名时，实际钱包的所有者无需支付交易费用，我们将 `owner` 账户更改为更通用的命名约定，例如 `payer`。
+
+因此，`deposit` 的账户结构将如下所示：
+
+```rust
+pub struct DepositAccounts<'a> {
+    pub payer: &'a AccountInfo,
+    pub vault: &'a AccountInfo,
+}
+
+impl<'a> TryFrom<&'a [AccountInfo]> for DepositAccounts<'a> {
+    type Error = ProgramError;
+
+    fn try_from(accounts: &'a [AccountInfo]) -> Result<Self, Self::Error> {
+        let [payer, vault, _] = accounts else {
+            return Err(ProgramError::NotEnoughAccountKeys);
+        };
+
+        // Accounts Checks
+        if !payer.is_signer() {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
+
+        if !vault.is_owned_by(&pinocchio_system::ID) {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
+
+        if vault.lamports().ne(&0) {
+            return Err(ProgramError::InvalidAccountData);
+        }
+
+        // Return the accounts
+        Ok(Self { payer, vault })
+    }
+}
+```
+
+让我们分解每个账户检查：
+1. `payer`：必须是签名者，因为他们需要授权 lamports 的转移
+2. `vault`：
+   - 必须由系统程序拥有
+   - 必须为零 lamports（确保“新鲜”存款）
+
+对于 `vault`，我们将检查：
+- 它是否从正确的种子派生
+- 是否匹配预期的 PDA 地址
+由于种子的一部分在 `instruction_data` 中，而我们此时无法访问它。
+
+现在让我们实现指令数据结构：
+
+```rust
+#[repr(C, packed)]
+pub struct DepositInstructionData {
+    pub pubkey: Secp256r1Pubkey,
+    pub amount: u64,
+}
+
+impl<'a> TryFrom<&'a [u8]> for DepositInstructionData {
+    type Error = ProgramError;
+
+    fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
+        if data.len() != size_of::<Self>() {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+
+        let (pubkey_bytes, amount_bytes) = data.split_at(size_of::<Secp256r1Pubkey>());
+
+        Ok(Self {
+            pubkey: pubkey_bytes.try_into().unwrap(),
+            amount: u64::from_le_bytes(amount_bytes.try_into().unwrap()),
+      })
+    }
+}
+```
+
+我们将指令数据反序列化为 `DepositInstructionData` 结构，其中包含：
+- `pubkey`：进行存款的用户的 Secp256r1 公钥
+- `amount`：存款的 lamports 数量
+
+虽然在生产代码中通常不建议使用 unwrap，但在这种情况下是安全的，因为我们已经在 `try_from` 方法中验证了数据的长度。如果数据长度不匹配，它将在到达此点之前返回错误。
+
+最后，让我们实现存款指令：
+
+```rust
+pub struct Deposit<'a> {
+    pub accounts: DepositAccounts<'a>,
+    pub instruction_data: DepositInstructionData,
+}
+
+impl<'a> TryFrom<(&'a [u8], &'a [AccountInfo])> for Deposit<'a> {
+    type Error = ProgramError;
+
+    fn try_from((data, accounts): (&'a [u8], &'a [AccountInfo])) -> Result<Self, Self::Error> {
+        let accounts = DepositAccounts::try_from(accounts)?;
+        let instruction_data = DepositInstructionData::try_from(data)?;
+
+        Ok(Self {
+            accounts,
+            instruction_data,
+        })
+    }
+}
+
+impl<'a> Deposit<'a> {
+    pub const DISCRIMINATOR: &'a u8 = &0;
+
+    pub fn process(&mut self) -> ProgramResult {
+        // Check vault address
+        let (vault_key, _) = find_program_address(
+            &[
+                b"vault",
+                &self.instruction_data.pubkey[..1],
+                &self.instruction_data.pubkey[1..33]
+            ],
+            &crate::ID
+        );
+        if vault_key.ne(self.accounts.vault.key()) {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
+
+        Transfer {
+            from: self.accounts.payer,
+            to: self.accounts.vault,
+            lamports: self.instruction_data.amount,
+        }
+        .invoke()
+    }
+}
+```
+
+如前所述，我们需要验证金库的PDA是否由正确的种子派生。在这个基于Secp256r1的金库中，我们使用`Secp256r1Pubkey`作为种子的一部分，而不是传统的所有者公钥。这是一个关键的安全措施，确保只有持有相应Secp256r1密钥的人才能访问金库。
+
+`Secp256r1Pubkey`长度为33字节，因为它使用了椭圆曲线公钥的压缩点表示格式。该格式包括：
+- 1字节用于点的奇偶性（指示y坐标是偶数还是奇数）
+- 32字节用于x坐标
+
+由于Solana的`find_program_address`函数对每个种子的长度限制为32字节，我们需要将`Secp256r1Pubkey`分成两部分：
+1. 奇偶性字节（`pubkey[..1]`）
+2. x坐标字节（`pubkey[1..33]`）
+
+<ArticleSection name="Withdraw" id="withdraw" level="h2" />
+
+提款指令执行以下步骤：
+1. 验证金库中有lamports（非空）
+2. 使用金库的PDA代表其自身签署转账
+3. 将金库中的所有lamports转回给所有者
+
+首先，让我们定义提款的账户结构：
+
+```rust
+pub struct WithdrawAccounts<'a> {
+    pub payer: &'a AccountInfo,
+    pub vault: &'a AccountInfo,
+    pub instructions: &'a AccountInfo,
+}
+
+impl<'a> TryFrom<&'a [AccountInfo]> for WithdrawAccounts<'a> {
+    type Error = ProgramError;
+
+    fn try_from(accounts: &'a [AccountInfo]) -> Result<Self, Self::Error> {
+        let [payer, vault, instructions, _system_program] = accounts else {
+            return Err(ProgramError::NotEnoughAccountKeys);
+        };
+
+        if !payer.is_signer() {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
+
+        if !vault.is_owned_by(&pinocchio_system::ID) {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
+
+        if vault.lamports().eq(&0) {
+            return Err(ProgramError::InvalidAccountData);
+        }
+
+        Ok(Self { payer, vault, instructions })
+    }
+}
+```
+
+现在让我们实现指令数据结构：
+
+```rust
+pub struct WithdrawInstructionData {
+    pub bump: [u8;1]
+}
+
+impl<'a> TryFrom<&'a [u8]> for WithdrawInstructionData {
+    type Error = ProgramError;
+
+    fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
+        Ok(Self {
+            bump: [*data.first().ok_or(ProgramError::InvalidInstructionData)?],
+        })
+    }
+}
+```
+
+如您所见，为了优化，我们将bump作为指令数据传递，而不是在`process()`中重新派生，因为该过程已经因为所有其他必要的检查而“繁重”。
+
+最后，让我们实现`withdraw`指令：
+
+```rust
+pub struct Withdraw<'a> {
+    pub accounts: WithdrawAccounts<'a>,
+    pub instruction_data: WithdrawInstructionData,
+}
+
+impl<'a> TryFrom<(&'a [u8], &'a [AccountInfo])> for Withdraw<'a> {
+    type Error = ProgramError;
+
+    fn try_from((data, accounts): (&'a [u8], &'a [AccountInfo])) -> Result<Self, Self::Error> {
+        let accounts = WithdrawAccounts::try_from(accounts)?;
+        let instruction_data = WithdrawInstructionData::try_from(data)?;
+
+        Ok(Self {
+            accounts,
+            instruction_data,
+        })
+    }
+}
+
+impl<'a> Withdraw<'a> {
+    pub const DISCRIMINATOR: &'a u8 = &1;
+
+    pub fn process(&mut self) -> ProgramResult {
+        // Deserialize our instructions
+        let instructions: Instructions<Ref<[u8]>> = Instructions::try_from(self.accounts.instructions)?;
+        // Get instruction directly after this one
+        let ix: IntrospectedInstruction = instructions.get_instruction_relative(1)?;
+        // Get Secp256r1 instruction
+        let secp256r1_ix = Secp256r1Instruction::try_from(&ix)?;
+        // Enforce that we only have one signature
+        if secp256r1_ix.num_signatures() != 1 {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        // Enforce that the signer of the first signature is our PDA owner
+        let signer: Secp256r1Pubkey = *secp256r1_ix.get_signer(0)?;
+
+        // Check that our fee payer is the correct 
+        let (payer, expiry) = secp256r1_ix
+            .get_message_data(0)?
+            .split_at_checked(32)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+
+        if self.accounts.payer.key().ne(payer) {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
+
+        // Get current timestamp
+        let now = Clock::get()?.unix_timestamp;
+        // Get signature expiry timestamp
+        let expiry = i64::from_le_bytes(
+            expiry
+                .try_into()
+                .map_err(|_| ProgramError::InvalidInstructionData)?
+        );
+        if now > expiry {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        
+        // Create signer seeds for our CPI
+        let seeds = [
+            Seed::from(b"vault"),
+            Seed::from(signer[..1].as_ref()),
+            Seed::from(signer[1..].as_ref()),
+            Seed::from(&self.instruction_data.bump),
+        ];
+        let signers = [Signer::from(&seeds)];
+
+        Transfer {
+            from: self.accounts.vault,
+            to: self.accounts.payer,
+            lamports: self.accounts.vault.lamports(),
+        }
+        .invoke_signed(&signers)
+    }
+}
+```
+
+提款过程涉及多个安全检查，以确保交易的合法性。让我们分解如何验证Secp256r1签名并防范潜在攻击：
+
+1. **指令内省**
+- 我们使用指令 sysvar 来检查交易中的下一条指令
+- 这使我们能够验证 Secp256r1 签名，从而证明签名密钥的所有权
+- Secp256r1 的签名验证始终在单独的指令中进行
+
+2. **签名验证**
+
+```rust
+let secp256r1_ix = Secp256r1Instruction::try_from(&ix)?;
+if secp256r1_ix.num_signatures() != 1 {
+    return Err(ProgramError::InvalidInstructionData);
+}
+let signer: Secp256r1Pubkey = *secp256r1_ix.get_signer(0)?;
+```
+
+- 我们验证签名数量是否正好为一个
+- 我们提取签名者的公钥，该公钥必须与用于创建验证用途的金库 PDA 的公钥匹配
+
+3. **消息验证**
+
+```rust
+let (payer, expiry) = secp256r1_ix.get_message_data(0)?.split_at_checked(32)?;
+if self.accounts.payer.key().ne(payer) {
+    return Err(ProgramError::InvalidAccountOwner);
+}
+```
+
+- 签名的消息包含两条关键信息：
+    - 目标接收者的地址（32 字节）
+    - 签名过期的时间戳（8 字节）
+- 这可以防止 MEV 攻击，即有人拦截并重复使用有效签名，通过传递另一个 `payer` 并声称金库中的金额
+
+4. **过期检查**
+
+```rust
+let now = Clock::get()?.unix_timestamp;
+let expiry = i64::from_le_bytes(expiry.try_into()?);
+if now > expiry {
+    return Err(ProgramError::InvalidInstructionData);
+}
+```
+
+- 我们验证签名是否未过期
+- 这增加了基于时间的安全层，以防止签名被重复使用
+- 过期时间应被视为“冷却期”；在过期之前不能创建新的金库，否则可能在实际所有者不知情的情况下被重复使用。
+
+5. **PDA 签名**
+
+```rust
+let seeds = [
+    Seed::from(b"vault"),
+    Seed::from(signer[..1].as_ref()),
+    Seed::from(signer[1..].as_ref()),
+    Seed::from(&self.instruction_data.bump),
+];
+```
+
+- 最后，我们使用已验证的公钥创建 PDA 种子
+- 这确保只有合法的 Secp256r1 密钥持有者可以签署提现交易
